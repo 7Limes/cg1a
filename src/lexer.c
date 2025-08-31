@@ -33,11 +33,6 @@ int compile_expressions(regex_t *expressions_dest, const char **expressions, siz
 }
 
 
-void lexer_error(uint64_t source_line, uint64_t source_column) {
-    printf("\x1b[31mERROR: Unrecognized token at line %ld, column %ld.\x1b[0m\n", source_line+1, source_column+1);
-}
-
-
 int create_lexer(Lexer *lexer_dest, char *source, size_t source_length) {
     lexer_dest->source = source;
     lexer_dest->current_char_pointer = source;
@@ -72,11 +67,6 @@ int lexer_next(Lexer *lexer, Token *token_dest) {
         for (int i = 0; i < AMOUNT_TOKEN_TYPES; i++) {
             regex_t current_expression = lexer->token_expressions[i];
             if (regexec(&current_expression, lexer->current_char_pointer, 1, &match, 0) == 0) {
-                // // Allocate space for the token value
-                // char *token_value = malloc(sizeof (char) * (match.rm_eo + 1));
-                // strncpy(token_value, lexer->current_char_pointer, match.rm_eo);
-                // token_value[match.rm_eo] = '\0';
-                
                 // Create the token
                 token_dest->source = lexer->source;
                 token_dest->type = (TokenType) i;
@@ -112,7 +102,6 @@ int lexer_next(Lexer *lexer, Token *token_dest) {
 
         // Unrecognized token
         if (!is_ignored) {
-            lexer_error(lexer->source_line, lexer->source_column);
             lexer->is_done = true;
             return -1;
         }

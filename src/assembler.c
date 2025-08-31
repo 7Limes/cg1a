@@ -61,8 +61,13 @@ const char *INSTRUCTIONS[AMOUNT_INSTRUCTIONS] = {
 const uint8_t ARGUMENT_COUNTS[AMOUNT_INSTRUCTIONS] = {2, 2, 3, 3, 3, 3, 3, 3, 3, 2, 2, 3, 2, 4, 4, 1, 3};
 
 
-void assembler_error(const Token *token, const char *message) {
-    printf("\x1b[31mERROR (line %ld, col %ld): %s\n", token->source_line+1, token->source_column+1, message);
+void error(uint64_t line, uint64_t column, const char *source_file, const char *message) {
+    printf("\x1b[31mERROR (%s:%ld:%ld): %s\n", source_file, line, column, message);
+}
+
+
+void token_error(const Token *token, const char *source_file, const char *message) {
+    error(token->source_line+1, token->source_column+1, source_file, message);
 }
 
 
@@ -86,11 +91,12 @@ int get_instruction_opcode(const char *s) {
 }
 
 
-int get_instruction_args(Token *arg_dest, uint8_t arg_count, Lexer *lexer) {
+int get_instruction_args(Token *arg_dest, uint8_t arg_count, Lexer *lexer, const char *source_file) {
     for (uint8_t i = 0; i < arg_count; i++) {
         Token token;
         lexer_next(lexer, &token);
         if (token.type != INTEGER && token.type != ADDRESS && token.type != NAME) {
+            token_error(&token, source_file, "Expected integer, address, or name for instruction argument.");
             return -1;
         }
         arg_dest[i] = token;
@@ -99,7 +105,7 @@ int get_instruction_args(Token *arg_dest, uint8_t arg_count, Lexer *lexer) {
 }
 
 
-int parse_argument_token(Argument *arg_dest, const Token *token, const Map *labels) {
+int parse_argument_token(Argument *arg_dest, const Token *token, const Map *labels, const char *source_file) {
     char *token_value = get_token_value(token);
     int error_code = 0;
     switch (token->type) {
@@ -112,7 +118,7 @@ int parse_argument_token(Argument *arg_dest, const Token *token, const Map *labe
             void *index;
             int label_result = get_map_value(&index, labels, token_value);
             if (label_result == -1) {
-                assembler_error(token, "Tried to reference undefined label.");
+                token_error(token, source_file, "Tried to reference undefined label.");
                 error_code = -1;
             }
             else {
@@ -124,7 +130,7 @@ int parse_argument_token(Argument *arg_dest, const Token *token, const Map *labe
             arg_dest->value = atoi(token_value+1);  // Add 1 to cut off '$'
             break;
         default:
-            assembler_error(token, "Invalid argument type.");
+            token_error(token, source_file, "Invalid argument type.");
             error_code = -2;
     }
 
@@ -134,8 +140,8 @@ int parse_argument_token(Argument *arg_dest, const Token *token, const Map *labe
 
 
 int write_output_file(
-        const char *output_file, int32_t meta_vars[AMOUNT_META_VARS],
-        const List *instructions, const Map *labels,
+        const char *source_file, const char *output_file, 
+        int32_t meta_vars[AMOUNT_META_VARS], const List *instructions, const Map *labels,
         int32_t start_label, int32_t tick_label
     ) {
     // Clear existing file
@@ -177,7 +183,7 @@ int write_output_file(
         uint8_t arg_count = ARGUMENT_COUNTS[ins->opcode];
         for (uint8_t j = 0; j < arg_count; j++) {
             Argument arg;
-            int parse_result = parse_argument_token(&arg, &ins->arguments[j], labels);
+            int parse_result = parse_argument_token(&arg, &ins->arguments[j], labels, source_file);
             if (parse_result != 0) {
                 got_error = true;
                 break;
@@ -236,7 +242,7 @@ int assemble_file(const char *input_file, const char *output_file) {
         Token token;
         int next_response = lexer_next(&lexer, &token);
         if (next_response < 0) {
-            got_error = true;
+            error(lexer.source_line+1, lexer.source_column+1, input_file, "Unrecognized token.");
             break;
         }
         if (next_response == 1) {
@@ -245,7 +251,7 @@ int assemble_file(const char *input_file, const char *output_file) {
         switch (token.type) {
             case META_VARIABLE:
                 if (state != META) {
-                    assembler_error(&token, "Found meta variable outside file header.");
+                    token_error(&token, input_file, "Found meta variable outside file header.");
                     got_error = true;
                     break;
                 }
@@ -254,7 +260,7 @@ int assemble_file(const char *input_file, const char *output_file) {
                 copy_token_value(meta_var, &token);
                 int index = get_meta_var_index(meta_var+1);  // Cut off '#'
                 if (index == -1) {
-                    assembler_error(&token, "Unrecognized meta variable.");
+                    token_error(&token, input_file, "Unrecognized meta variable.");
                     got_error = true;
                     break;
                 }
@@ -276,7 +282,7 @@ int assemble_file(const char *input_file, const char *output_file) {
 
                 // Check if the label was already declared
                 if (get_map_value(NULL, &labels, label_name) == 0) {
-                    assembler_error(&token, "Label declared more than once.");
+                    token_error(&token, input_file, "Label declared more than once.");
                     free(label_name);
                     got_error = true;
                     break;
@@ -293,7 +299,7 @@ int assemble_file(const char *input_file, const char *output_file) {
                 copy_token_value(instruction, &token);
                 int opcode = get_instruction_opcode(instruction);
                 if (opcode == -1) {
-                    assembler_error(&token, "Unrecognized instruction.");
+                    token_error(&token, input_file, "Unrecognized instruction.");
                     got_error = true;
                     break;
                 }
@@ -301,9 +307,8 @@ int assemble_file(const char *input_file, const char *output_file) {
                 uint8_t arg_count = ARGUMENT_COUNTS[opcode];
                 Instruction ins;
                 ins.opcode = opcode;
-                int args_result = get_instruction_args(ins.arguments, arg_count, &lexer);
+                int args_result = get_instruction_args(ins.arguments, arg_count, &lexer, input_file);
                 if (args_result == -1) {
-                    assembler_error(&token, "Expected integer, address, or name for instruction argument.");
                     got_error = true;
                     break;
                 }
@@ -314,7 +319,7 @@ int assemble_file(const char *input_file, const char *output_file) {
             
             case INTEGER:
             case ADDRESS:
-                assembler_error(&token, "Got value outside of instruction.");
+                token_error(&token, input_file, "Got value outside of instruction.");
                 got_error = true;
                 break;
             
@@ -335,8 +340,8 @@ int assemble_file(const char *input_file, const char *output_file) {
         }
 
         write_output_file(
-            output_file, meta_vars,
-            &instructions, &labels,
+            input_file, output_file,
+            meta_vars, &instructions, &labels,
             start_label, tick_label
         );
     }

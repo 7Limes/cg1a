@@ -62,7 +62,7 @@ int resize_map(Map *map, size_t new_capacity) {
 }
 
 
-int add_map_value(Map *map, const char *key, void *value) {
+int add_map_value(Map *map, char *key, void *value) {
     if (map->size >= map->capacity) {
         return -1;
     }
@@ -91,7 +91,7 @@ int add_map_value(Map *map, const char *key, void *value) {
 }
 
 
-int get_map_value(void **dest, const Map *map, const char *key) {
+int get_map_value(void **dest, const Map *map, char *key) {
     size_t index = fnv_hash(key) % map->capacity;
     MapNode *node = &map->data[index];
     
