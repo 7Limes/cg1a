@@ -34,7 +34,7 @@ int compile_expressions(regex_t *expressions_dest, const char **expressions, siz
 
 
 void lexer_error(uint64_t source_line, uint64_t source_column) {
-    printf("\x1b[31mERROR: Unrecognized token at line %ld, column %ld.\x1b[0m\n", source_line, source_column);
+    printf("\x1b[31mERROR: Unrecognized token at line %ld, column %ld.\x1b[0m\n", source_line+1, source_column+1);
 }
 
 
