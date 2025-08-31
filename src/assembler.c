@@ -61,19 +61,6 @@ const char *INSTRUCTIONS[AMOUNT_INSTRUCTIONS] = {
 const uint8_t ARGUMENT_COUNTS[AMOUNT_INSTRUCTIONS] = {2, 2, 3, 3, 3, 3, 3, 3, 3, 2, 2, 3, 2, 4, 4, 1, 3};
 
 
-void temp_print_ins(const Instruction *ins) {
-    size_t arg_count = ARGUMENT_COUNTS[ins->opcode];
-    printf("%s ", INSTRUCTIONS[ins->opcode]);
-    for (int i = 0; i < arg_count; i++) {
-        Token arg = ins->arguments[i];
-        char arg_str[256];
-        copy_token_value(arg_str, &arg);
-        printf("%s ", arg_str);
-    }
-    printf("\n");
-}
-
-
 void assembler_error(const Token *token, const char *message) {
     printf("\x1b[31mERROR (line %ld, col %ld): %s\n", token->source_line+1, token->source_column+1, message);
 }
@@ -136,10 +123,13 @@ int parse_argument_token(Argument *arg_dest, const Token *token, const Map *labe
             arg_dest->type = ADDRESS_ARG;
             arg_dest->value = atoi(token_value+1);  // Add 1 to cut off '$'
             break;
+        default:
+            assembler_error(token, "Invalid argument type.");
+            error_code = -2;
     }
 
     free(token_value);
-    return 0;
+    return error_code;
 }
 
 
@@ -245,87 +235,92 @@ int assemble_file(const char *input_file, const char *output_file) {
     while (!lexer.is_done && !got_error) {
         Token token;
         int next_response = lexer_next(&lexer, &token);
-        if (next_response == 0) {
-            switch (token.type) {
-                case META_VARIABLE:
-                    if (state != META) {
-                        assembler_error(&token, "Found meta variable outside file header.");
-                        got_error = true;
-                        break;
-                    }
-
-                    char meta_var[16];
-                    copy_token_value(meta_var, &token);
-                    int index = get_meta_var_index(meta_var+1);  // Cut off '#'
-                    if (index == -1) {
-                        assembler_error(&token, "Unrecognized meta variable.");
-                        got_error = true;
-                        break;
-                    }
-
-                    Token value_token;
-                    lexer_next(&lexer, &value_token);
-                    char var_value[16];
-                    copy_token_value(var_value, &value_token);
-                    meta_vars[index] = atoi(var_value);
-                    break;
-                
-                case LABEL_NAME:
-                    if (state != SUBROUTINES) {
-                        state = SUBROUTINES;
-                    }
-                    
-                    char *label_name = get_token_value(&token);
-                    label_name[token.length-1] = '\0';  // Cut off ':'
-
-                    // Check if the label was already declared
-                    if (get_map_value(NULL, &labels, label_name) == 0) {
-                        assembler_error(&token, "Label declared more than once.");
-                        free(label_name);
-                        got_error = true;
-                        break;
-                    }
-                    else {
-                        void *ins_index_ptr = malloc(sizeof(int32_t));
-                        *(int32_t*) ins_index_ptr = instruction_index;
-                        add_map_value(&labels, label_name, ins_index_ptr);
-                    }
-                    break;
-                
-                case NAME:
-                    char instruction[16];
-                    copy_token_value(instruction, &token);
-                    int opcode = get_instruction_opcode(instruction);
-                    if (opcode == -1) {
-                        assembler_error(&token, "Unrecognized instruction.");
-                        got_error = true;
-                        break;
-                    }
-
-                    uint8_t arg_count = ARGUMENT_COUNTS[opcode];
-                    Instruction ins;
-                    ins.opcode = opcode;
-                    int args_result = get_instruction_args(ins.arguments, arg_count, &lexer);
-                    if (args_result == -1) {
-                        assembler_error(&token, "Expected integer, address, or name for instruction argument.");
-                        got_error = true;
-                        break;
-                    }
-                    append_list_value(&instructions, &ins);
-
-                    instruction_index++;
-                    break;
-                
-                case INTEGER:
-                case ADDRESS:
-                    assembler_error(&token, "Got value outside of instruction.");
+        if (next_response < 0) {
+            got_error = true;
+            break;
+        }
+        if (next_response == 1) {
+            break;
+        }
+        switch (token.type) {
+            case META_VARIABLE:
+                if (state != META) {
+                    assembler_error(&token, "Found meta variable outside file header.");
                     got_error = true;
                     break;
+                }
+
+                char meta_var[16];
+                copy_token_value(meta_var, &token);
+                int index = get_meta_var_index(meta_var+1);  // Cut off '#'
+                if (index == -1) {
+                    assembler_error(&token, "Unrecognized meta variable.");
+                    got_error = true;
+                    break;
+                }
+
+                Token value_token;
+                lexer_next(&lexer, &value_token);
+                char var_value[16];
+                copy_token_value(var_value, &value_token);
+                meta_vars[index] = atoi(var_value);
+                break;
+            
+            case LABEL_NAME:
+                if (state != SUBROUTINES) {
+                    state = SUBROUTINES;
+                }
                 
-                case COMMENT:
-                case NEWLINE:
-                    continue;
-            }
+                char *label_name = get_token_value(&token);
+                label_name[token.length-1] = '\0';  // Cut off ':'
+
+                // Check if the label was already declared
+                if (get_map_value(NULL, &labels, label_name) == 0) {
+                    assembler_error(&token, "Label declared more than once.");
+                    free(label_name);
+                    got_error = true;
+                    break;
+                }
+                else {
+                    void *ins_index_ptr = malloc(sizeof(int32_t));
+                    *(int32_t*) ins_index_ptr = instruction_index;
+                    add_map_value(&labels, label_name, ins_index_ptr);
+                }
+                break;
+            
+            case NAME:
+                char instruction[16];
+                copy_token_value(instruction, &token);
+                int opcode = get_instruction_opcode(instruction);
+                if (opcode == -1) {
+                    assembler_error(&token, "Unrecognized instruction.");
+                    got_error = true;
+                    break;
+                }
+
+                uint8_t arg_count = ARGUMENT_COUNTS[opcode];
+                Instruction ins;
+                ins.opcode = opcode;
+                int args_result = get_instruction_args(ins.arguments, arg_count, &lexer);
+                if (args_result == -1) {
+                    assembler_error(&token, "Expected integer, address, or name for instruction argument.");
+                    got_error = true;
+                    break;
+                }
+                append_list_value(&instructions, &ins);
+
+                instruction_index++;
+                break;
+            
+            case INTEGER:
+            case ADDRESS:
+                assembler_error(&token, "Got value outside of instruction.");
+                got_error = true;
+                break;
+            
+            case COMMENT:
+            case NEWLINE:
+                continue;
         }
     }
 
@@ -352,6 +347,7 @@ int assemble_file(const char *input_file, const char *output_file) {
     for (size_t i = 0; i < labels.size; i++) {
         MapNode *node = &labels.data[i];
         if (node->key != NULL) {
+            free(node->key);
             free(node->value);
         }
     }
